@@ -5,7 +5,7 @@ import random
 import threading
 import subprocess
 import requests
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
 # --- CLOUD & LOOP CONFIG ---
 START_TIME = time.time()
@@ -13,9 +13,11 @@ MAX_DURATION = (5 * 3600) + (45 * 60) # 5h 45m handoff
 GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
 GH_PAT = os.getenv("GH_PAT")
 
-# --- STREAM SPECS ---
-WIDTH, HEIGHT = 1080, 1920 
-FPS = 30
+# --- MASTER DUAL-FORMAT SPECS ---
+WIDTH, HEIGHT = 1920, 1080 # Horizontal for PC, Center-Safe for Shorts
+SAFE_W = 608 # The exact width of the Shorts Feed crop
+SAFE_X = (WIDTH - SAFE_W) // 2 # 656 (Center start)
+FPS = 15 # Optimized to STOP lagging on GitHub servers
 STREAM_KEY = os.getenv("STREAM_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
@@ -25,10 +27,11 @@ AUDIO_FILE = "audio.mp3"
 state = {
     "subs": 0,
     "goal": 10000,
-    "current_text": "SkyVerse Engine Loading...",
-    "current_eng": "Subscribe to join SkyVerse! 🔥",
+    "current_text": "Who is the ultimate IPL Captain?\n\nA) MS Dhoni\nB) Rohit Sharma\n\nDrop your answer!",
+    "rendered_text": "", # Caching variable to stop lag
+    "cached_lines": [],  # Caching variable to stop lag
     "last_update": time.time(),
-    "cycle_duration": 8.0 # Thoda slow kiya taaki viewers padh sakein
+    "cycle_duration": 15.0 # 15 Seconds: Audience ko padhne aur type karne ka time
 }
 
 def trigger_next_run():
@@ -49,88 +52,107 @@ def get_live_subs():
         time.sleep(60)
 
 def update_content():
+    # You MUST update content.json to have Questions! Example below.
     try:
-        with open("content.json", "r") as f: data = json.load(f)
+        with open("content.json", "r", encoding="utf-8") as f: data = json.load(f)
     except:
-        data = {"lines": [{"text": "Add content.json file!"}], "engagement": ["Subscribe!"]}
+        data = {"lines": [{"text": "Who is better?\nA) Virat\nB) Dhoni\n\nTell us below!"}]}
         
     while True:
         line = random.choice(data["lines"])
         state["current_text"] = line["text"]
-        state["current_eng"] = random.choice(data["engagement"])
         state["last_update"] = time.time()
         time.sleep(state["cycle_duration"])
 
 def get_wrapped_text(text, font, max_width, draw):
-    words = text.split()
     lines = []
-    current_line = ""
-    for word in words:
-        test_line = current_line + word + " "
-        w = draw.textbbox((0, 0), test_line, font=font)[2]
-        if w < max_width:
-            current_line = test_line
-        else:
-            lines.append(current_line)
-            current_line = word + " "
-    lines.append(current_line)
+    # Hum \n (newlines) ko respect karenge jo text mein hain
+    paragraphs = text.split('\n')
+    for p in paragraphs:
+        if not p.strip():
+            lines.append("")
+            continue
+        words = p.split()
+        current_line = ""
+        for word in words:
+            test_line = current_line + word + " "
+            w = draw.textbbox((0, 0), test_line, font=font)[2]
+            if w < max_width:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word + " "
+        lines.append(current_line)
     return lines
 
 def render_frame(font_main, font_sub, font_small):
-    # 1. Cleaner Dark Background
-    frame = Image.new('RGB', (WIDTH, HEIGHT), (10, 10, 20))
+    # 1. PC Full Background (Dark sleek look)
+    frame = Image.new('RGB', (WIDTH, HEIGHT), (12, 12, 18))
     draw = ImageDraw.Draw(frame)
     
-    # Glow effect
     t = time.time()
     elapsed = t - state["last_update"]
     progress = min(elapsed / state["cycle_duration"], 1.0)
     
-    # 2. Main Text (Safe Zone Wrapping)
-    # Safe Margin: 100px both sides
-    max_text_width = WIDTH - 200
-    alpha = 255
-    if elapsed < 0.8: alpha = int(255 * (elapsed / 0.8))
-    elif elapsed > (state["cycle_duration"] - 0.8): alpha = int(255 * ((state["cycle_duration"] - elapsed) / 0.8))
-
-    lines = get_wrapped_text(state["current_text"], font_main, max_text_width, draw)
+    # 2. DRAW PC SIDE PANELS (Visible to Long Form only)
+    # Left Panel
+    draw.rectangle([0, 0, SAFE_X, HEIGHT], fill=(8, 8, 12))
+    draw.text((100, 200), "SKYVERSE", font=font_sub, fill=(255, 255, 255))
+    draw.text((100, 300), "LIVE 24/7", font=font_small, fill=(0, 200, 255))
+    draw.text((100, 500), f"Current Subs: {state['subs']:,}", font=font_small, fill=(255, 255, 255))
+    draw.text((100, 550), f"Goal: {state['goal']:,}", font=font_small, fill=(0, 255, 150))
     
-    line_spacing = 100
+    # Right Panel
+    draw.rectangle([WIDTH - SAFE_X, 0, WIDTH, HEIGHT], fill=(8, 8, 12))
+    draw.text((WIDTH - 450, 400), "HOW TO PLAY:", font=font_small, fill=(255, 200, 50))
+    draw.text((WIDTH - 450, 460), "1. Read the Question", font=font_small, fill=(200, 200, 200))
+    draw.text((WIDTH - 450, 510), "2. Vote in Live Chat", font=font_small, fill=(200, 200, 200))
+    draw.text((WIDTH - 450, 560), "3. Subscribe! 🔥", font=font_small, fill=(200, 200, 200))
+
+    # 3. DRAW CENTER PANEL (The "Shorts Safe Zone")
+    # This is what mobile users see. PC users see it in the middle.
+    draw.rectangle([SAFE_X, 0, SAFE_X + SAFE_W, HEIGHT], fill=(15, 15, 25))
+    
+    # Top Mobile UI
+    draw.rounded_rectangle([SAFE_X + 50, 100, SAFE_X + SAFE_W - 50, 200], radius=20, fill=(30, 30, 45))
+    draw.text((SAFE_X + 100, 130), f"SUBS: {state['subs']:,}  🔥", font=font_small, fill=(255, 255, 255))
+    
+    # --- TEXT CACHING TO FIX LAG ---
+    if state["current_text"] != state["rendered_text"]:
+        # Only recalculate wrapping when the text actually changes (every 15s)
+        max_text_width = SAFE_W - 100
+        state["cached_lines"] = get_wrapped_text(state["current_text"], font_main, max_text_width, draw)
+        state["rendered_text"] = state["current_text"]
+
+    lines = state["cached_lines"]
+    
+    # Smooth Fade
+    alpha = 255
+    if elapsed < 1.0: alpha = int(255 * (elapsed / 1.0))
+    elif elapsed > (state["cycle_duration"] - 1.0): alpha = int(255 * ((state["cycle_duration"] - elapsed) / 1.0))
+
+    line_spacing = 70
     total_text_height = len(lines) * line_spacing
     current_y = (HEIGHT // 2) - (total_text_height // 2)
 
+    # Draw Center Text
     for line in lines:
-        w = draw.textbbox((0, 0), line.strip(), font=font_main)[2]
-        draw.text(((WIDTH - w) // 2, current_y), line.strip(), font=font_main, fill=(255, 255, 255, alpha))
+        if line: # Skip empty lines used for spacing
+            w = draw.textbbox((0, 0), line.strip(), font=font_main)[2]
+            draw.text(((SAFE_X + (SAFE_W - w) // 2), current_y), line.strip(), font=font_main, fill=(255, 255, 255, alpha))
         current_y += line_spacing
 
-    # 3. TOP UI: Better Subscriber Bar
-    draw.rounded_rectangle([100, 150, WIDTH-100, 360], radius=25, fill=(30, 30, 50))
-    draw.text((150, 190), "SkyVerse Live Status", font=font_small, fill=(0, 200, 255))
-    draw.text((150, 235), f"SUBS: {state['subs']:,}", font=font_sub, fill=(255, 255, 255))
-    
-    # Progress Bar UI
-    bar_full_w = WIDTH - 300
-    prog_ratio = min(state["subs"] / state["goal"], 1.0)
-    draw.rectangle([150, 320, 150+bar_full_w, 335], fill=(50, 50, 70))
-    draw.rectangle([150, 320, 150+int(bar_full_w * prog_ratio), 335], fill=(0, 255, 150))
-    draw.text((WIDTH-380, 240), f"Goal: {state['goal']//1000}K", font=font_small, fill=(0, 255, 150))
-
-    # 4. BOTTOM UI: Engagement Banner
-    draw.rectangle([0, HEIGHT-220, WIDTH, HEIGHT-10], fill=(20, 20, 35))
-    eng_w = draw.textbbox((0, 0), state["current_eng"], font=font_small)[2]
-    draw.text(((WIDTH-eng_w)//2, HEIGHT-160), state["current_eng"], font=font_small, fill=(255, 215, 0))
-
-    # 5. SYNCED PROGRESS BAR (The Hook)
-    # Yeh bar bilkul text change hone ke saath hi khatam hoga
-    draw.rectangle([0, HEIGHT-20, int(WIDTH * (1 - progress)), HEIGHT], fill=(255, 60, 90))
+    # 4. TIMER BAR (Shorts Safe Zone Only)
+    # The shrinking urgency bar inside the mobile view
+    bar_width = SAFE_W * (1 - progress)
+    draw.rectangle([SAFE_X, HEIGHT - 20, SAFE_X + bar_width, HEIGHT], fill=(255, 60, 90))
 
     return frame.tobytes()
 
 def start_stream():
     try:
-        font_main = ImageFont.truetype(FONT_BOLD, 75)
-        font_sub = ImageFont.truetype(FONT_BOLD, 85)
+        font_main = ImageFont.truetype(FONT_BOLD, 55) # Slightly smaller to fit Q&A formatting
+        font_sub = ImageFont.truetype(FONT_BOLD, 80)
         font_small = ImageFont.truetype(FONT_BOLD, 40)
     except:
         font_main = font_sub = font_small = ImageFont.load_default()
@@ -138,8 +160,8 @@ def start_stream():
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{WIDTH}x{HEIGHT}', 
         '-pix_fmt', 'rgb24', '-r', str(FPS), '-i', '-', '-stream_loop', '-1', '-i', AUDIO_FILE, 
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', 
-        '-b:v', '3000k', '-pix_fmt', 'yuv420p', '-g', '60',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', 
+        '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '5000k', '-pix_fmt', 'yuv420p', '-g', '30',
         '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
         '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{STREAM_KEY}"
     ]
@@ -155,7 +177,7 @@ def start_stream():
             process.stdin.write(frame_data)
         except:
             break
-        time.sleep(1/FPS)
+        time.sleep(1.0/FPS)
 
 if __name__ == "__main__":
     threading.Thread(target=get_live_subs, daemon=True).start()
