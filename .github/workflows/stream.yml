@@ -1,31 +1,28 @@
-name: 24/7 Viral Stream Engine
+name: 24/7 Dual Format Viral Stream
 
 on:
-  workflow_dispatch:  # Allows manual start
-  repository_dispatch: # Allows the Python script to trigger the next run
+  workflow_dispatch:
+  repository_dispatch:
     types: [restart_stream]
 
 jobs:
-  build-and-stream:
+  stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # GitHub max is 360 (6 hours)
-    
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Setup Python
+      - name: Setup
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (FFmpeg)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install Pillow requests python-dotenv
 
-      - name: Install Python Requirements
-        run: pip install Pillow requests
-
-      - name: Run Stream with Auto-Handoff
+      - name: Start SkyVerse Engine
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
