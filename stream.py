@@ -13,7 +13,7 @@ MAX_DURATION = (5 * 3600) + (45 * 60) # 5h 45m handoff
 GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
 GH_PAT = os.getenv("GH_PAT")
 
-# --- STREAM SPECS (VERTICAL IS KEY FOR VIRAL REACH) ---
+# --- STREAM SPECS ---
 WIDTH, HEIGHT = 1080, 1920 
 FPS = 30
 STREAM_KEY = os.getenv("STREAM_KEY")
@@ -25,10 +25,10 @@ AUDIO_FILE = "audio.mp3"
 state = {
     "subs": 0,
     "goal": 10000,
-    "current_text": "Starting SkyVerse...",
-    "current_eng": "Subscribe for more! 🔥",
+    "current_text": "SkyVerse Engine Loading...",
+    "current_eng": "Subscribe to join SkyVerse! 🔥",
     "last_update": time.time(),
-    "cycle_duration": 7.0 # Fast rotation for retention
+    "cycle_duration": 8.0 # Thoda slow kiya taaki viewers padh sakein
 }
 
 def trigger_next_run():
@@ -44,13 +44,16 @@ def get_live_subs():
             url = f"https://www.googleapis.com/youtube/v3/channels?part=statistics&id={CHANNEL_ID}&key={YOUTUBE_API_KEY}"
             data = requests.get(url).json()
             state["subs"] = int(data["items"][0]["statistics"]["subscriberCount"])
-            # Auto-increment goal
             if state["subs"] >= state["goal"]: state["goal"] += 5000
         except: pass
         time.sleep(60)
 
 def update_content():
-    with open("content.json", "r") as f: data = json.load(f)
+    try:
+        with open("content.json", "r") as f: data = json.load(f)
+    except:
+        data = {"lines": [{"text": "Add content.json file!"}], "engagement": ["Subscribe!"]}
+        
     while True:
         line = random.choice(data["lines"])
         state["current_text"] = line["text"]
@@ -58,82 +61,85 @@ def update_content():
         state["last_update"] = time.time()
         time.sleep(state["cycle_duration"])
 
+def get_wrapped_text(text, font, max_width, draw):
+    words = text.split()
+    lines = []
+    current_line = ""
+    for word in words:
+        test_line = current_line + word + " "
+        w = draw.textbbox((0, 0), test_line, font=font)[2]
+        if w < max_width:
+            current_line = test_line
+        else:
+            lines.append(current_line)
+            current_line = word + " "
+    lines.append(current_line)
+    return lines
+
 def render_frame(font_main, font_sub, font_small):
-    # 1. Create Deep Gradient Background
-    frame = Image.new('RGB', (WIDTH, HEIGHT), (10, 10, 15))
+    # 1. Cleaner Dark Background
+    frame = Image.new('RGB', (WIDTH, HEIGHT), (10, 10, 20))
     draw = ImageDraw.Draw(frame)
     
-    # Simple Animated Background Effect (Drifting light)
+    # Glow effect
     t = time.time()
-    glow_y = int(500 + 100 * (t % 10 / 10))
-    draw.ellipse([(-200, glow_y), (WIDTH+200, glow_y+800)], fill=(20, 25, 50))
-
-    # 2. Timing & Animation Logic
     elapsed = t - state["last_update"]
-    progress = elapsed / state["cycle_duration"]
+    progress = min(elapsed / state["cycle_duration"], 1.0)
     
-    # Professional Fade & Scale
+    # 2. Main Text (Safe Zone Wrapping)
+    # Safe Margin: 100px both sides
+    max_text_width = WIDTH - 200
     alpha = 255
     if elapsed < 0.8: alpha = int(255 * (elapsed / 0.8))
     elif elapsed > (state["cycle_duration"] - 0.8): alpha = int(255 * ((state["cycle_duration"] - elapsed) / 0.8))
+
+    lines = get_wrapped_text(state["current_text"], font_main, max_text_width, draw)
     
-    # 3. DRAW MAIN TEXT (Safe Zone: Middle)
-    scale = 1.0 + (elapsed * 0.02) # Subtle zoom-in effect
-    font_size = int(65 * scale)
-    try: font_dyn = ImageFont.truetype(FONT_BOLD, font_size)
-    except: font_dyn = font_main
+    line_spacing = 100
+    total_text_height = len(lines) * line_spacing
+    current_y = (HEIGHT // 2) - (total_text_height // 2)
+
+    for line in lines:
+        w = draw.textbbox((0, 0), line.strip(), font=font_main)[2]
+        draw.text(((WIDTH - w) // 2, current_y), line.strip(), font=font_main, fill=(255, 255, 255, alpha))
+        current_y += line_spacing
+
+    # 3. TOP UI: Better Subscriber Bar
+    draw.rounded_rectangle([100, 150, WIDTH-100, 360], radius=25, fill=(30, 30, 50))
+    draw.text((150, 190), "SkyVerse Live Status", font=font_small, fill=(0, 200, 255))
+    draw.text((150, 235), f"SUBS: {state['subs']:,}", font=font_sub, fill=(255, 255, 255))
     
-    # Multiline text wrapping
-    max_w = WIDTH - 150
-    words = state["current_text"].split()
-    lines = []
-    current_line = ""
-    for w in words:
-        if draw.textbbox((0,0), current_line + w, font=font_dyn)[2] < max_w:
-            current_line += w + " "
-        else:
-            lines.append(current_line)
-            current_line = w + " "
-    lines.append(current_line)
+    # Progress Bar UI
+    bar_full_w = WIDTH - 300
+    prog_ratio = min(state["subs"] / state["goal"], 1.0)
+    draw.rectangle([150, 320, 150+bar_full_w, 335], fill=(50, 50, 70))
+    draw.rectangle([150, 320, 150+int(bar_full_w * prog_ratio), 335], fill=(0, 255, 150))
+    draw.text((WIDTH-380, 240), f"Goal: {state['goal']//1000}K", font=font_small, fill=(0, 255, 150))
 
-    y_start = (HEIGHT // 2) - (len(lines) * 40)
-    for i, line in enumerate(lines):
-        w = draw.textbbox((0,0), line, font=font_dyn)[2]
-        draw.text(((WIDTH-w)//2, y_start + (i*90)), line, font=font_dyn, fill=(255, 255, 255, alpha))
+    # 4. BOTTOM UI: Engagement Banner
+    draw.rectangle([0, HEIGHT-220, WIDTH, HEIGHT-10], fill=(20, 20, 35))
+    eng_w = draw.textbbox((0, 0), state["current_eng"], font=font_small)[2]
+    draw.text(((WIDTH-eng_w)//2, HEIGHT-160), state["current_eng"], font=font_small, fill=(255, 215, 0))
 
-    # 4. TOP UI: Sub Counter & Road to 10K
-    # Glassmorphism box
-    draw.rounded_rectangle([100, 150, WIDTH-100, 350], radius=20, fill=(30, 30, 45))
-    draw.text((150, 190), "SkyVerse Live", font=font_small, fill=(200, 200, 255))
-    draw.text((150, 230), f"{state['subs']:,}", font=font_sub, fill=(255, 255, 255))
-    
-    # Progress Bar
-    bar_width = WIDTH - 300
-    goal_prog = min(state["subs"] / state["goal"], 1.0)
-    draw.rectangle([150, 310, 150+bar_width, 320], fill=(50, 50, 60))
-    draw.rectangle([150, 310, 150+int(bar_width * goal_prog), 320], fill=(0, 200, 255))
-    draw.text((WIDTH-350, 235), f"Road to {state['goal']//1000}K", font=font_small, fill=(0, 200, 255))
-
-    # 5. BOTTOM UI: Engagement Banner
-    draw.rectangle([0, HEIGHT-200, WIDTH, HEIGHT], fill=(20, 20, 30))
-    eng_w = draw.textbbox((0,0), state["current_eng"], font=font_sub)[2]
-    draw.text(((WIDTH-eng_w)//2, HEIGHT-140), state["current_eng"], font=font_sub, fill=(255, 200, 0))
-
-    # Countdown bar (The "Don't Leave" Trigger)
-    draw.rectangle([0, HEIGHT-10, int(WIDTH * (1-progress)), HEIGHT], fill=(255, 50, 50))
+    # 5. SYNCED PROGRESS BAR (The Hook)
+    # Yeh bar bilkul text change hone ke saath hi khatam hoga
+    draw.rectangle([0, HEIGHT-20, int(WIDTH * (1 - progress)), HEIGHT], fill=(255, 60, 90))
 
     return frame.tobytes()
 
 def start_stream():
-    font_main = ImageFont.truetype(FONT_BOLD, 65)
-    font_sub = ImageFont.truetype(FONT_BOLD, 80)
-    font_small = ImageFont.truetype(FONT_BOLD, 35)
+    try:
+        font_main = ImageFont.truetype(FONT_BOLD, 75)
+        font_sub = ImageFont.truetype(FONT_BOLD, 85)
+        font_small = ImageFont.truetype(FONT_BOLD, 40)
+    except:
+        font_main = font_sub = font_small = ImageFont.load_default()
 
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{WIDTH}x{HEIGHT}', 
         '-pix_fmt', 'rgb24', '-r', str(FPS), '-i', '-', '-stream_loop', '-1', '-i', AUDIO_FILE, 
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', 
-        '-b:v', '4500k', '-pix_fmt', 'yuv420p', '-g', '60',
+        '-b:v', '3000k', '-pix_fmt', 'yuv420p', '-g', '60',
         '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
         '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{STREAM_KEY}"
     ]
