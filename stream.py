@@ -5,131 +5,153 @@ import random
 import threading
 import subprocess
 import requests
-from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-# --- GITHUB AUTO-LOOP CONFIG ---
+# --- CLOUD & LOOP CONFIG ---
 START_TIME = time.time()
-MAX_DURATION = (5 * 3600) + (45 * 60) # 5 hours 45 minutes
-GITHUB_REPO = os.getenv("GITHUB_REPOSITORY") # Auto-provided by GitHub Actions
+MAX_DURATION = (5 * 3600) + (45 * 60) # 5h 45m handoff
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
 GH_PAT = os.getenv("GH_PAT")
 
-# --- STREAM CONFIG ---
+# --- STREAM SPECS (VERTICAL IS KEY FOR VIRAL REACH) ---
+WIDTH, HEIGHT = 1080, 1920 
+FPS = 30
+STREAM_KEY = os.getenv("STREAM_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-STREAM_KEY = os.getenv("STREAM_KEY")
-WIDTH, HEIGHT = 1280, 720
-FPS = 30
-FONT_PATH = "Montserrat-Bold.ttf"
+FONT_BOLD = "Montserrat-Bold.ttf"
 AUDIO_FILE = "audio.mp3"
 
 state = {
     "subs": 0,
     "goal": 10000,
-    "current_text": "Loading SkyVerse...",
-    "current_engagement": "Subscribe!",
-    "text_start_time": time.time(),
-    "duration_per_slide": 6.0 # Fast 6-second rotation for maximum retention
+    "current_text": "Starting SkyVerse...",
+    "current_eng": "Subscribe for more! 🔥",
+    "last_update": time.time(),
+    "cycle_duration": 7.0 # Fast rotation for retention
 }
 
-def trigger_next_github_action():
-    """Triggers the next 6-hour cycle via GitHub API."""
-    print("5h 45m reached. Triggering next GitHub Action...")
-    if not GH_PAT or not GITHUB_REPO:
-        print("Missing GitHub PAT or Repo context. Cannot restart.")
-        return
-
+def trigger_next_run():
+    if not GH_PAT or not GITHUB_REPO: return
     url = f"https://api.github.com/repos/{GITHUB_REPO}/dispatches"
-    headers = {
-        "Authorization": f"token {GH_PAT}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    data = {"event_type": "restart_stream"}
-    response = requests.post(url, json=data, headers=headers)
-    
-    if response.status_code == 204:
-        print("Successfully triggered next run. Shutting down gracefully...")
-        os._exit(0)
-    else:
-        print(f"Failed to trigger next run: {response.status_code} - {response.text}")
+    headers = {"Authorization": f"token {GH_PAT}", "Accept": "application/vnd.github.v3+json"}
+    requests.post(url, json={"event_type": "restart_stream"}, headers=headers)
+    os._exit(0)
 
-def fetch_subs():
+def get_live_subs():
     while True:
         try:
             url = f"https://www.googleapis.com/youtube/v3/channels?part=statistics&id={CHANNEL_ID}&key={YOUTUBE_API_KEY}"
-            response = requests.get(url).json()
-            state["subs"] = int(response["items"][0]["statistics"]["subscriberCount"])
-        except Exception as e:
-            print(f"API Error: {e}")
+            data = requests.get(url).json()
+            state["subs"] = int(data["items"][0]["statistics"]["subscriberCount"])
+            # Auto-increment goal
+            if state["subs"] >= state["goal"]: state["goal"] += 5000
+        except: pass
         time.sleep(60)
 
-def rotate_content():
-    with open("content.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
-    
+def update_content():
+    with open("content.json", "r") as f: data = json.load(f)
     while True:
-        state["current_text"] = random.choice(data["lines"])["text"]
-        state["current_engagement"] = random.choice(data["engagement"])
-        state["text_start_time"] = time.time()
-        time.sleep(state["duration_per_slide"])
+        line = random.choice(data["lines"])
+        state["current_text"] = line["text"]
+        state["current_eng"] = random.choice(data["engagement"])
+        state["last_update"] = time.time()
+        time.sleep(state["cycle_duration"])
+
+def render_frame(font_main, font_sub, font_small):
+    # 1. Create Deep Gradient Background
+    frame = Image.new('RGB', (WIDTH, HEIGHT), (10, 10, 15))
+    draw = ImageDraw.Draw(frame)
+    
+    # Simple Animated Background Effect (Drifting light)
+    t = time.time()
+    glow_y = int(500 + 100 * (t % 10 / 10))
+    draw.ellipse([(-200, glow_y), (WIDTH+200, glow_y+800)], fill=(20, 25, 50))
+
+    # 2. Timing & Animation Logic
+    elapsed = t - state["last_update"]
+    progress = elapsed / state["cycle_duration"]
+    
+    # Professional Fade & Scale
+    alpha = 255
+    if elapsed < 0.8: alpha = int(255 * (elapsed / 0.8))
+    elif elapsed > (state["cycle_duration"] - 0.8): alpha = int(255 * ((state["cycle_duration"] - elapsed) / 0.8))
+    
+    # 3. DRAW MAIN TEXT (Safe Zone: Middle)
+    scale = 1.0 + (elapsed * 0.02) # Subtle zoom-in effect
+    font_size = int(65 * scale)
+    try: font_dyn = ImageFont.truetype(FONT_BOLD, font_size)
+    except: font_dyn = font_main
+    
+    # Multiline text wrapping
+    max_w = WIDTH - 150
+    words = state["current_text"].split()
+    lines = []
+    current_line = ""
+    for w in words:
+        if draw.textbbox((0,0), current_line + w, font=font_dyn)[2] < max_w:
+            current_line += w + " "
+        else:
+            lines.append(current_line)
+            current_line = w + " "
+    lines.append(current_line)
+
+    y_start = (HEIGHT // 2) - (len(lines) * 40)
+    for i, line in enumerate(lines):
+        w = draw.textbbox((0,0), line, font=font_dyn)[2]
+        draw.text(((WIDTH-w)//2, y_start + (i*90)), line, font=font_dyn, fill=(255, 255, 255, alpha))
+
+    # 4. TOP UI: Sub Counter & Road to 10K
+    # Glassmorphism box
+    draw.rounded_rectangle([100, 150, WIDTH-100, 350], radius=20, fill=(30, 30, 45))
+    draw.text((150, 190), "SkyVerse Live", font=font_small, fill=(200, 200, 255))
+    draw.text((150, 230), f"{state['subs']:,}", font=font_sub, fill=(255, 255, 255))
+    
+    # Progress Bar
+    bar_width = WIDTH - 300
+    goal_prog = min(state["subs"] / state["goal"], 1.0)
+    draw.rectangle([150, 310, 150+bar_width, 320], fill=(50, 50, 60))
+    draw.rectangle([150, 310, 150+int(bar_width * goal_prog), 320], fill=(0, 200, 255))
+    draw.text((WIDTH-350, 235), f"Road to {state['goal']//1000}K", font=font_small, fill=(0, 200, 255))
+
+    # 5. BOTTOM UI: Engagement Banner
+    draw.rectangle([0, HEIGHT-200, WIDTH, HEIGHT], fill=(20, 20, 30))
+    eng_w = draw.textbbox((0,0), state["current_eng"], font=font_sub)[2]
+    draw.text(((WIDTH-eng_w)//2, HEIGHT-140), state["current_eng"], font=font_sub, fill=(255, 200, 0))
+
+    # Countdown bar (The "Don't Leave" Trigger)
+    draw.rectangle([0, HEIGHT-10, int(WIDTH * (1-progress)), HEIGHT], fill=(255, 50, 50))
+
+    return frame.tobytes()
 
 def start_stream():
-    font_main = ImageFont.truetype(FONT_PATH, 42)
-    font_sub = ImageFont.truetype(FONT_PATH, 32)
-    font_small = ImageFont.truetype(FONT_PATH, 20)
+    font_main = ImageFont.truetype(FONT_BOLD, 65)
+    font_sub = ImageFont.truetype(FONT_BOLD, 80)
+    font_small = ImageFont.truetype(FONT_BOLD, 35)
 
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{WIDTH}x{HEIGHT}', 
         '-pix_fmt', 'rgb24', '-r', str(FPS), '-i', '-', '-stream_loop', '-1', '-i', AUDIO_FILE, 
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', 
-        '-b:v', '2500k', '-pix_fmt', 'yuv420p', '-g', str(FPS*2),
+        '-b:v', '4500k', '-pix_fmt', 'yuv420p', '-g', '60',
         '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
         '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{STREAM_KEY}"
     ]
+    
     process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
     
-    # Dark, sleek background
-    base_bg = Image.new('RGB', (WIDTH, HEIGHT), color=(10, 10, 12))
-
     while True:
-        # Check if it's time to trigger the next GitHub Action
         if time.time() - START_TIME > MAX_DURATION:
-            trigger_next_github_action()
-
-        frame = base_bg.copy()
-        draw = ImageDraw.Draw(frame)
-        time_alive = time.time() - state["text_start_time"]
-        
-        # Fast Fade
-        opacity = 255
-        if time_alive < 0.5: opacity = int(255 * (time_alive * 2))
-        elif time_alive > (state["duration_per_slide"] - 0.5): opacity = int(255 * ((state["duration_per_slide"] - time_alive) * 2))
-        
-        # Center Text with movement
-        y_offset = int(15 * (time_alive / state["duration_per_slide"]))
-        text_bbox = draw.textbbox((0, 0), state["current_text"], font=font_main)
-        text_w = text_bbox[2] - text_bbox[0]
-        draw.text(((WIDTH - text_w) // 2, (HEIGHT // 2) - 40 + y_offset), state["current_text"], font=font_main, fill=(opacity, opacity, opacity))
-        
-        # Viral Element: Visual Countdown Bar (Creates urgency to stay watching)
-        progress_ratio = 1.0 - (time_alive / state["duration_per_slide"])
-        draw.rectangle([(0, HEIGHT - 10), (int(WIDTH * progress_ratio), HEIGHT)], fill=(255, 50, 80))
-        
-        # Subscriber Goal UI (Upper Left)
-        draw.text((30, 30), f"Road to {state['goal'] // 1000}K Subs 🔥", font=font_sub, fill=(255, 200, 50))
-        draw.text((30, 70), f"Current: {state['subs']:,}", font=font_main, fill=(255, 255, 255))
-        
+            trigger_next_run()
+            
+        frame_data = render_frame(font_main, font_sub, font_small)
         try:
-            process.stdin.write(frame.tobytes())
-        except BrokenPipeError:
-            print("FFmpeg dropped. Restarting pipeline...")
+            process.stdin.write(frame_data)
+        except:
             break
-        
-        time.sleep(1.0 / FPS)
+        time.sleep(1/FPS)
 
 if __name__ == "__main__":
-    threading.Thread(target=fetch_subs, daemon=True).start()
-    threading.Thread(target=rotate_content, daemon=True).start()
-    while True:
-        start_stream()
-        time.sleep(3)
+    threading.Thread(target=get_live_subs, daemon=True).start()
+    threading.Thread(target=update_content, daemon=True).start()
+    start_stream()
