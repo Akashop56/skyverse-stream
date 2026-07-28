@@ -33,4 +33,4 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python stream.py
+        run: python -u stream.py
