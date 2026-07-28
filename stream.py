@@ -48,10 +48,10 @@ def send_telegram_msg(text):
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text})
     except: pass
-
-# --- 1. TELEGRAM ADMIN CONTROLLER ---
+# --- 1. TELEGRAM ADMIN CONTROLLER (WITH DEBUG PRINT) ---
 def telegram_admin_listener():
-    send_telegram_msg("🟢 SkyVerse Engine Booted! Send /setvid <VIDEO_ID> if chat doesn't auto-connect in 3 mins. Use /reset to restart game.")
+    print("Initializing Telegram Bot Listener...")
+    send_telegram_msg("🟢 SkyVerse Engine Booted! Send /setvid <VIDEO_ID> to connect chat.")
     offset = None
     while True:
         try:
@@ -59,16 +59,23 @@ def telegram_admin_listener():
             params = {"timeout": 30, "offset": offset}
             res = requests.get(url, params=params).json()
             
+            # Print response to GitHub logs to see what's happening
+            if not res.get("ok"):
+                print(f"Telegram API Error Response: {res}")
+
             for item in res.get("result", []):
                 offset = item["update_id"] + 1
                 msg = item.get("message", {})
                 chat_id = str(msg.get("chat", {}).get("id"))
                 
-                if chat_id == str(TELEGRAM_CHAT_ID):
+                print(f"Received message from chat_id: {chat_id} (Expected: {TELEGRAM_CHAT_ID})")
+                
+                # Compare as strings
+                if chat_id == str(TELEGRAM_CHAT_ID).strip():
                     text = msg.get("text", "").strip()
+                    print(f"Valid Admin Command Received: {text}")
                     
                     if text.startswith("/setvid "):
-                        # INSTANT CHAT CONNECTION
                         vid = text.replace("/setvid ", "").strip()
                         game_state["live_video_id"] = vid
                         send_telegram_msg(f"✅ Video ID set to: {vid}. Connecting to chat...")
@@ -82,8 +89,13 @@ def telegram_admin_listener():
                         game_state["crashed"] = False
                         game_state["votes"] = {1: 0, 2: 0, 3: 0}
                         send_telegram_msg("✅ Game Reset!")
-        except: pass
+                else:
+                    print(f"Ignored message from unauthorized chat_id: {chat_id}")
+                    
+        except Exception as e:
+            print(f"CRITICAL TELEGRAM LISTENER ERROR: {e}")
         time.sleep(2)
+
 
 # --- 2. AUTO FETCH VIDEO ID ---
 def get_live_video_id():
