@@ -26,12 +26,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Launch SkyVerse Broadcast
-                env:
+        env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           STREAM_KEY: ${{ secrets.STREAM_KEY }}
           GH_PAT: ${{ secrets.GH_PAT }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
         run: python stream.py
