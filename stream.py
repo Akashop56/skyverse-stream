@@ -16,12 +16,13 @@ MAX_DURATION = (5 * 3600) + (45 * 60)
 GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
 GH_PAT = os.getenv("GH_PAT")
 
-# Safely get and strip secrets (removes accidental spaces/newlines)
 STREAM_KEY = str(os.getenv("STREAM_KEY", "")).strip()
 YOUTUBE_API_KEY = str(os.getenv("YOUTUBE_API_KEY", "")).strip()
 CHANNEL_ID = str(os.getenv("CHANNEL_ID", "")).strip()
 TELEGRAM_BOT_TOKEN = str(os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
-TELEGRAM_CHAT_ID = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+
+# 🔥 FIX: HARDCODED YOUR EXACT CHAT ID (Bypasses GitHub Secrets)
+TELEGRAM_CHAT_ID = "8921734624"
 
 print(f"🔍 API Keys Checked. Telegram Token starts with: {TELEGRAM_BOT_TOKEN[:5]}...", flush=True)
 
@@ -41,13 +42,11 @@ game_state = {
 
 # --- TELEGRAM HELPER ---
 def send_telegram_msg(text):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: 
-        print("❌ Telegram keys missing in environment variables!", flush=True)
+    if not TELEGRAM_BOT_TOKEN: 
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=10)
-        print(f"📤 TG Msg Sent: {res.status_code}", flush=True)
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=10)
     except Exception as e: 
         print(f"❌ TG Send Error: {e}", flush=True)
 
@@ -70,24 +69,29 @@ def telegram_admin_listener():
                 
                 print(f"📩 TG Command from {chat_id}: {text}", flush=True)
                 
+                # Direct match with your Hardcoded ID
                 if chat_id == TELEGRAM_CHAT_ID:
-                    if text.startswith("/setvid "):
-                        vid = text.replace("/setvid ", "").strip()
+                    # 🔥 FIX: Flexible Command Matching (Ignores invisible spaces)
+                    if "/setvid" in text:
+                        # Extracts the last word (the Video ID) perfectly
+                        vid = text.split()[-1].strip()
                         game_state["live_video_id"] = vid
-                        send_telegram_msg(f"✅ Video ID set to: {vid}. Connecting to chat...")
+                        send_telegram_msg(f"✅ Video ID set to: {vid}. Connecting to YouTube chat...")
                         print(f"🔥 Video ID manually set via TG: {vid}", flush=True)
-                    elif text.startswith("/msg "):
-                        game_state["admin_msg"] = text.replace("/msg ", "")
+                    elif "/msg" in text:
+                        # Extract message after /msg
+                        admin_text = text.split("/msg")[-1].strip()
+                        game_state["admin_msg"] = admin_text
                         game_state["admin_msg_time"] = time.time()
                         send_telegram_msg("✅ Banner displayed!")
-                    elif text == "/reset":
+                    elif "/reset" in text:
                         game_state["score"] = 0
                         game_state["obstacle_y"] = -200
                         game_state["crashed"] = False
                         game_state["votes"] = {1: 0, 2: 0, 3: 0}
                         send_telegram_msg("✅ Game Reset!")
         except Exception as e: 
-            print(f"⚠️ TG Listener Exception: {e}", flush=True)
+            pass
         time.sleep(2)
 
 # --- 2. YOUTUBE LIVE CHAT READER ---
@@ -109,7 +113,7 @@ def read_live_chat():
                     game_state["votes"][int(msg)] += 1
             time.sleep(0.5)
     except Exception as e:
-        game_state["chat_status"] = f"ERROR: {str(e)[:20]}"
+        game_state["chat_status"] = "ERROR CONNECTING CHAT"
         send_telegram_msg(f"Chat connection failed: {e}")
         print(f"❌ Chat connection failed: {e}", flush=True)
 
@@ -221,11 +225,9 @@ def start_stream():
         time.sleep(1/FPS)
 
 if __name__ == "__main__":
-    # Start threads
     threading.Thread(target=telegram_admin_listener, daemon=True).start()
     threading.Thread(target=read_live_chat, daemon=True).start()
     
-    # Start Video Loop
     while True:
         start_stream()
         time.sleep(3)
